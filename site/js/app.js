@@ -84,7 +84,7 @@
     </tr>`).join("");
     return `
       <h1 class="page-title">Panel passports</h1>
-      <p class="lede">Every panel we test gets an ID and a QR code. The passport records what the bench measured, how the panel compares with the panels measured next to it, and which wiring its batch did best in.</p>
+      <p class="lede">Every tested panel gets an ID and a QR code. The passport records its current and voltage, how it compares with the panels next to it, and which wiring its batch did best in. <a href="#/scale">Scale</a> shows the same rule on a pallet, where the hardware cannot try every wiring.</p>
       <div class="card">
         <div class="row" style="justify-content:space-between;align-items:baseline"><h2>Tested panels</h2>${ps.length ? `<a class="small no-print" href="#/print">Print cards for all ${ps.length}</a>` : ""}</div>
         ${ps.length ? `<table class="table"><thead><tr><th>Passport</th><th>Grade</th><th class="num">Short-circuit</th><th class="num">Open-circuit</th><th class="num">Score</th><th>Flags</th><th>Measured</th></tr></thead><tbody>${rows}</tbody></table>`
@@ -281,17 +281,51 @@
     </div>`;
   }
 
+  function simulatedRun(run) {
+    const text = `${run.link || ""} ${run.bench || ""} ${run.source || ""}`;
+    return /sample|mock|single-diode|simulat/i.test(text);
+  }
+
+  function pageScale() {
+    const rows = window.SSScale.scenarios();
+    const cards = rows.map((row) => `
+      <div class="card">
+        <h2>${esc(row.title)}</h2>
+        <p>${esc(row.note)}</p>
+        <div class="result-head" style="margin-top:14px">
+          <div class="stat is-hero"><b>${row.matched.toFixed(2)} W</b><span>matched by current</span></div>
+          <div class="stat"><b>${row.arrived.toFixed(2)} W</b><span>wired in the order they arrived</span></div>
+          <div class="stat"><b>+${row.gainVsArrived.toFixed(1)}%</b><span>more power from the same panels</span></div>
+        </div>
+        <p>If all ${row.n} panels were clear panels, this array would make <b>${row.healthy.toFixed(2)} W</b>. Matching the panels we actually have reaches <b>${row.shareOfHealthy.toFixed(0)}%</b> of that. The missing power left with the degraded panels. Matching does not give it back. Matching stops a weak panel from forcing a strong one down to its current.</p>
+        <p class="small muted" style="margin-top:8px">${row.measurements} measurements, one per panel. ${row.wires} ways to pair them into series strings of ${row.k}. ${row.checkedAll ? `This batch is small enough to check all ${row.checkedCount} groupings: sorting by current is the best one.` : "Too many groupings to try on hardware, or even to list here. The product measures each panel once and sorts."}</p>
+      </div>`).join("");
+    return `
+      <h1 class="page-title">Scale</h1>
+      <p class="lede">The product is a current and voltage reading on each panel, then a wiring list. A degraded panel still produces less. Put it in a string with another degraded panel, and the healthy panels keep their own current. The watts below are the single-diode model, the same one the Array Builder uses.</p>
+      ${cards}
+      <div class="card">
+        <h2>What scales, and what does not</h2>
+        <p>A relay box that rewires four panels is a check on the rule. It does not become the warehouse tool. The warehouse clips each module once, prints the passport, and sorts the pallet in software. The number of wirings grows faster than any bench. The number of measurements grows one per panel.</p>
+        <p class="small muted" style="margin-top:8px">Buyers are decommissioning crews and resellers who currently ship ungraded pallets, and installers who build strings from those pallets. The check they write is for the grade, not for a relay per module.</p>
+      </div>`;
+  }
+
   function pageImpact() {
-    const proofs = runs.filter((r) => r.proof && r.proof.kind === "sweep").map((r) => r.proof);
-    const gains = proofs.map((p) => Number(p.gain_pct));
-    const mean = gains.length ? gains.reduce((a, b) => a + b, 0) / gains.length : null;
+    const proofRuns = runs.filter((r) => r.proof && r.proof.kind === "sweep");
+    const benchRuns = proofRuns.filter((r) => !simulatedRun(r));
+    const simRuns = proofRuns.filter((r) => simulatedRun(r));
+    const meanOf = (list) => list.reduce((a, r) => a + Number(r.proof.gain_pct), 0) / list.length;
+    const benchMean = benchRuns.length ? meanOf(benchRuns) : null;
+    const simMean = simRuns.length ? meanOf(simRuns) : null;
     return `
       <h1 class="page-title">Impact</h1>
-      <p class="lede">Numbers here are either measured on our bench or taken from a named source. Anything else is marked as an assumption.</p>
+      <p class="lede">A figure is labeled with where it came from: the bench, the panel model, or a named source. <a href="#/scale">Scale</a> is the model on a pallet.</p>
       <div class="card">
-        <h2>Measured on our bench</h2>
-        <p>${mean != null ? `Across ${proofs.length} proof run${proofs.length === 1 ? "" : "s"}, matching panels by current gave <b>${mean.toFixed(1)}% more power</b> than the worst wiring of the same panels, measured at each wiring's maximum power point.` : "No proof runs imported yet. Import a run with a proof to fill this in."}</p>
-        <p class="small muted" style="margin-top:8px">With two of four panels behind 35% film this is deliberately a bad batch. Our model puts the gain for realistic aging (panels at 80%) at about 5–7%, and the gain against the average wiring at about 22% for the film case.</p>
+        <h2>Power recovered by matching</h2>
+        <p>${benchMean != null ? `Across ${benchRuns.length} bench proof run${benchRuns.length === 1 ? "" : "s"}, matching panels by current gave <b>${benchMean.toFixed(1)}% more power</b> than the comparison wiring, at each wiring's maximum power point.` : "No bench proof is loaded. A bench run is one whose file does not describe itself as a sample or a model."}</p>
+        <p style="margin-top:8px">${simMean != null ? `The loaded model run reports <b>${simMean.toFixed(1)}% more power</b> than its comparison wiring. That run is labeled as model output in its bench field.` : "No model proof is loaded."}</p>
+        <p class="small muted" style="margin-top:8px">Two panels at 35% current is a staged batch, so the gain looks large. Two panels at 80% is the ordinary used-module case, and the gain is much smaller. Both are on the Scale page. Neither number is nameplate power restored.</p>
       </div>
       <div class="card">
         <h2>Why reuse matters (sources)</h2>
@@ -303,8 +337,8 @@
         </ul>
       </div>
       <div class="card">
-        <h2>Assumptions still to settle</h2>
-        <p class="small muted">Panels diverted per tested batch and any carbon figure need a stated scenario (how many panels a bench grades per hour, what fraction pass, what they displace). D to write, with sources, before the submission.</p>
+        <h2>What we do not claim</h2>
+        <p class="small muted">No carbon figure. A diverted-panel count needs a stated pass rate and a stated displacement, and we do not have those measurements. The sourced facts above are the reuse case. The Scale page is the engineering case.</p>
       </div>`;
   }
 
@@ -317,6 +351,7 @@
     try {
       if (hash.startsWith("#/p/")) { view.innerHTML = pagePassport(safeDecode(hash.slice(4))); route = "index"; }
       else if (hash.startsWith("#/build")) { view.innerHTML = pageBuild(); wireBuild(); route = "build"; }
+      else if (hash.startsWith("#/scale")) { view.innerHTML = pageScale(); route = "scale"; }
       else if (hash.startsWith("#/impact")) { view.innerHTML = pageImpact(); route = "impact"; }
       else if (hash.startsWith("#/print")) { view.innerHTML = pagePrint(); route = "index"; }
       else { view.innerHTML = pageIndex(); wireIndex(); }

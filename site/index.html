@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Second String passports</title>
-  <meta name="description" content="Passports for tested used solar panels, and a builder that groups them into strings by current.">
+  <meta name="description" content="Passports for used solar panels, and a wiring list that keeps a degraded panel from limiting a strong one.">
   <link rel="stylesheet" href="css/site.css">
   <link rel="stylesheet" href="css/motion.css">
 </head>
@@ -14,16 +14,18 @@
     <nav class="nav__links" aria-label="Pages">
       <a href="#/" data-route="index">Passports</a>
       <a href="#/build" data-route="build">Array Builder</a>
+      <a href="#/scale" data-route="scale">Scale</a>
       <a href="#/impact" data-route="impact">Impact</a>
     </nav>
   </header>
   <main id="view" class="view"></main>
   <footer class="foot">
-    <p>Measurements come from the Second String bench: short-circuit current for every panel at the same instant, open-circuit voltage, then an I-V sweep of each wiring. Grades are relative to the strongest panel measured under the same light.</p>
+    <p>A passport is one panel's short-circuit current and open-circuit voltage. A run measured on the bench says so. The Scale page uses the same single-diode model to show a pallet, where trying every wiring is no longer possible. Grades compare panels under the same light.</p>
   </footer>
   <script src="vendor/qrcode.js"></script>
   <script src="js/model.js"></script>
   <script src="js/builder.js"></script>
+  <script src="js/scale.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>
