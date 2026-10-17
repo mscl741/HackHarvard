@@ -1,6 +1,6 @@
 "use strict";
 
-const API_URL = "http://127.0.0.1:8766/advisor";
+const API_URL = window.CHALK_API_URL || "http://127.0.0.1:8766/advisor";
 let selectedPanels = [];
 let dataSource = "SIMULATED";
 

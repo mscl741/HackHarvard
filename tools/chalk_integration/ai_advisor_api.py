@@ -5,8 +5,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from panel_advisor_v3 import answer_question
 
-HOST = "127.0.0.1"
-PORT = 8766
+HOST = os.getenv("HOST", "127.0.0.1")
+PORT = int(os.getenv("PORT", "8766"))
 
 WARNINGS = [
     "Current matching is a preliminary heuristic, not measured maximum power.",
@@ -188,6 +188,7 @@ class Handler(BaseHTTPRequestHandler):
 
         origin = self.headers.get("Origin", "")
         allowed_origins = {
+            "https://mscl741.github.io",
             "http://localhost:8000",
             "http://127.0.0.1:8000",
         }
