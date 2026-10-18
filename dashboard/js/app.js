@@ -1,4 +1,4 @@
-import { renderBars, renderTrace, renderCurves, renderWiring, updatePump, panelCellSvg, makeTip, pairPanels } from "./charts.js";
+import { renderBars, renderTrace, renderCurves, renderWiring, updatePump, panelCellSvg, makeTip, pairPanels, pairSlots } from "./charts.js";
 import { MockBench } from "./mock.js";
 import { initCalibration, savedCalibration, describeCalibration } from "./calibrate.js";
 import { initLoad, loadNoun } from "./load.js";
@@ -8,6 +8,9 @@ import { readEntry, gradeMessage, searchMessage, benchLine } from "./manual.js";
 import { RecordingPlayer, readRecording } from "./playback.js";
 
 const TRACE_WINDOW_MS = 120000;
+const MAX_PANEL_MA = 300;   // these panels are about 200 mA in full sun; anything above this is an open-input spike
+const SENSOR_NOT_FOUND = /INA219\s+(X1|X2|Y1|Y2|OUT)\s+0x[0-9a-f]+\s+not found/i;
+const SLOT_OF = { X1: 0, X2: 1, Y1: 2, Y2: 3 };
 const MAX_RAW_LINES = 20000;
 const MAX_TABLE_ROWS = 200;
 const MODE_WORDS = { IDLE: "Idle", RUN: "Running", GRADE: "Grading", SWEEP: "Sweeping", SEARCH: "Searching", PROOF: "Proving", PUMPPROOF: "Pump A/B", CAL: "Calibrating" };
@@ -37,6 +40,10 @@ const state = {
   factors: [1, 1, 1, 1],
   panels: {},              // id -> grade entry
   liveCurrent: {},         // id -> mA
+  liveHist: { 1: [], 2: [], 3: [], 4: [] },
+  missingSlots: new Set(), // 0..3, set when the Uno reports that INA219 missing
+  outMissing: false,       // no output sensor: the power trace would be electrical noise
+  traceUnit: "W",
   films: { 2: true, 4: true },   // only known on the mock bench; real panels show no film overlay
   trace: [],               // {t, p, pairing}
   sweeps: {},
@@ -46,6 +53,7 @@ const state = {
   raw: [],
   rows: [],
   lastPower: 0,
+  measuredMa: null,       // sum of the panel currents the board actually published
   errorTimer: null,
   passports: LS.get("ss.passports", null),   // panel position -> passport id, kept across runs
   benchNotes: LS.get("ss.benchNotes", ""),
@@ -105,6 +113,49 @@ const isPanelId = (id) => id === 1 || id === 2 || id === 3 || id === 4;
 const isFactors = (f) => Array.isArray(f) && f.length === 4 && f.every(isNum);
 const isGradePanel = (p) => !!p && isPanelId(p.id) && isNum(p.isc_ma) && isNum(p.voc_v) && isNum(p.score)
   && isPair(p.grade) && (p.flags == null || (Array.isArray(p.flags) && p.flags.every((f) => typeof f === "string")));
+
+function slotOfPanel(id) {
+  return pairSlots(state.pairing || "A").indexOf(id);
+}
+function panelMissing(id) {
+  const slot = slotOfPanel(id);
+  return slot >= 0 && state.missingSlots.has(slot);
+}
+function smoothMa(id, v) {
+  if (!(v >= 0 && v <= MAX_PANEL_MA)) return null;
+  const h = state.liveHist[id];
+  h.push(v);
+  if (h.length > 5) h.shift();
+  const sorted = [...h].sort((a, b) => a - b);
+  return sorted[Math.floor((sorted.length - 1) / 2)];
+}
+// Phone-light current on this bench is about 1 mA. Anything the Uno actually measures
+// lights the cell; 0 mA stays dark so covering a panel is visible.
+function liveLevel(ma) {
+  if (!(ma >= 0.3)) return 0;
+  const lit = Math.log10(1 + ma) / Math.log10(1 + 40);
+  return Math.max(0.72, Math.min(1, lit));
+}
+function cellLive(id) {
+  const ma = state.liveCurrent[id];
+  if (ma == null || panelMissing(id)) return 0;
+  return liveLevel(ma);
+}
+function pumpWords() {
+  if (state.pump == null) return "—";
+  if (!state.pump) return "Off";
+  if (state.outMissing) return state.measuredMa == null ? "On" : `On, ${state.measuredMa.toFixed(0)} mA`;
+  return state.lastPower > 0.15 ? `On, ${state.lastPower.toFixed(2)} W` : "On, stalled";
+}
+function noteMissingSensors() {
+  const note = $("trace-note");
+  const title = $("trace-title");
+  if (!note || !title) return;
+  if (state.outMissing) {
+    setText(title, "Measured current, last two minutes");
+    setText(note, "Current from the INA219 boards the Uno found. The output sensor is not on this bench, so its noise is not drawn.");
+  }
+}
 const isPoint = (pt) => Array.isArray(pt) && isNum(pt[0]) && isNum(pt[1]);
 
 const handlers = {
@@ -116,24 +167,42 @@ const handlers = {
     renderReadouts(); renderCal(); renderWiringDiagram();
   },
   live(m) {
-    if (!m.out || !isNum(m.out.p_w)) return false;     // no fake 0 W point on the trace
+    // `out` is required. A failed output read prints null for p_w; the panel currents in the same line are still real.
+    if (!m.out || typeof m.out !== "object") return false;
+    const powerNum = isNum(m.out.p_w);
     if (typeof m.mode === "string" && m.mode) state.mode = m.mode;
     if (isPair(m.pairing)) state.pairing = m.pairing;
     state.pump = typeof m.pump === "boolean" ? m.pump : state.pump;
-    const p = m.out.p_w;
-    state.lastPower = p;
-    state.trace.push({ t: Date.now(), p, pairing: state.pairing });
+    if (Array.isArray(m.panels)) m.panels.forEach((pp) => {
+      if (!pp || !isPanelId(pp.id) || !isNum(pp.i_ma)) return;
+      if (panelMissing(pp.id)) { delete state.liveCurrent[pp.id]; state.liveHist[pp.id] = []; return; }
+      const smoothed = smoothMa(pp.id, pp.i_ma);
+      if (smoothed == null) return;                    // open-input spike, not a panel current
+      state.liveCurrent[pp.id] = smoothed;
+    });
+    const powerOk = powerNum && !state.outMissing && m.out.p_w >= 0 && m.out.p_w <= 8;
+    const measuredMa = [1, 2, 3, 4].filter((id) => !panelMissing(id) && isNum(state.liveCurrent[id])).reduce((sum, id) => sum + state.liveCurrent[id], 0);
+    if (state.outMissing) {
+      state.traceUnit = "mA";
+      state.lastPower = 0;
+      state.trace.push({ t: Date.now(), p: measuredMa, pairing: state.pairing || "A" });
+    } else if (powerOk) {
+      state.traceUnit = "W";
+      state.lastPower = m.out.p_w;
+      state.trace.push({ t: Date.now(), p: m.out.p_w, pairing: state.pairing });
+    }
     const cutoff = Date.now() - TRACE_WINDOW_MS - 2000;
     while (state.trace.length && state.trace[0].t < cutoff) state.trace.shift();
-    if (Array.isArray(m.panels)) m.panels.forEach((pp) => { if (pp && isPanelId(pp.id) && isNum(pp.i_ma)) state.liveCurrent[pp.id] = pp.i_ma; });
-    renderReadouts(); renderTraceChart(); renderPanelLive();
+    state.measuredMa = measuredMa;
+    renderReadouts(); renderTraceChart();
     const key = `${state.pairing}|${state.pump}`;
     if (key !== state.diagramKey) renderWiringDiagram();
-    else updatePump(els.wiring, { pump: state.pump, power: p, load: loadNoun() });
+    else updatePump(els.wiring, { pump: state.pump, power: state.outMissing ? null : state.lastPower, measuredMa, load: loadNoun() });
+    renderPanelLive();
   },
   grade(m) {
     if (!Array.isArray(m.panels) || !m.panels.length || !m.panels.every(isGradePanel)) return false;
-    m.panels.forEach((pp) => { state.panels[pp.id] = pp; });
+    m.panels.forEach((pp) => { if (!panelMissing(pp.id)) state.panels[pp.id] = pp; });
     state.predicted = isPair(m.predicted) ? m.predicted : null;
     ensurePassports();
     state.runId = newRunId(); state.runAt = new Date().toISOString();
@@ -173,8 +242,17 @@ const handlers = {
     renderCal();
   },
   error(m) {
-    showError(typeof m.msg === "string" && m.msg ? m.msg : "error");
-    if (demo.active) endDemo("error");
+    const msg = typeof m.msg === "string" && m.msg ? m.msg : "error";
+    const hit = msg.match(SENSOR_NOT_FOUND);
+    if (hit) {
+      const which = hit[1].toUpperCase();
+      if (which === "OUT") { state.outMissing = true; state.trace = []; state.traceUnit = "mA"; }
+      else state.missingSlots.add(SLOT_OF[which]);
+      noteMissingSensors();
+      renderPanels();
+    }
+    showError(msg);
+    if (demo.active && !hit) endDemo("error");
   },
   log() {},
 };
@@ -184,7 +262,7 @@ function renderReadouts() {
   setText(els.modeText, MODE_WORDS[state.mode] || state.mode);
   setText(els.pairingText, state.pairing ? `${state.pairing} (${pairPanels(state.pairing)})` : "—");
   els.pairingText.dataset.pair = state.pairing || "";
-  els.pumpText.textContent = state.pump == null ? "—" : state.pump ? (state.lastPower > 0.15 ? `On, ${state.lastPower.toFixed(2)} W` : "On, stalled") : "Off";
+  els.pumpText.textContent = pumpWords();
   document.querySelectorAll(".btn--pair").forEach((b) => b.classList.toggle("is-active", b.dataset.pair === state.pairing));
 }
 
@@ -251,12 +329,12 @@ function flagWords(flags) {
 }
 
 function renderPanels() {
-  const ids = [1, 2, 3, 4];
+  const ids = [1, 2, 3, 4].filter((id) => !panelMissing(id));
   els.panelRow.innerHTML = ids.map((id) => {
     const p = state.panels[id];
     const flagged = p && p.flags && p.flags.length;
     return `<article class="panel ${flagged ? "is-flagged" : ""}" data-id="${id}">
-      ${panelCellSvg({ name: `Panel ${id}`, film: !!state.films[id] && state.conn === "mock", dim: p && p.grade === "C" })}
+      ${panelCellSvg({ id, name: `Panel ${id}`, film: !!state.films[id] && state.conn === "mock", dim: p && p.grade === "C", live: cellLive(id), ma: state.liveCurrent[id] })}
       <div>
         <div class="panel__head"><span class="panel__name">Panel ${id}</span><span class="panel__grade ${p ? `g-${p.grade}` : ""}">${p ? esc(p.grade) : "–"}</span></div>
         <div class="panel__id">${state.passports ? esc(state.passports[id] || "") : "no passport yet"}</div>
@@ -278,10 +356,17 @@ function renderPanelLive() {
     const v = state.liveCurrent[span.dataset.live];
     span.textContent = v != null ? `${v.toFixed(0)} mA` : "—";
   });
+  document.querySelectorAll("[data-cell-ma]").forEach((el) => {
+    const v = state.liveCurrent[el.dataset.cellMa];
+    el.textContent = v != null ? `${v.toFixed(0)} mA` : "";
+  });
+  document.querySelectorAll("[data-cell]").forEach((el) => {
+    el.style.setProperty("--live", cellLive(Number(el.dataset.cell)).toFixed(3));
+  });
 }
 
 function renderTraceChart() {
-  renderTrace(els.trace, { points: state.trace, now: Date.now(), windowMs: TRACE_WINDOW_MS, tip });
+  renderTrace(els.trace, { points: state.trace, now: Date.now(), windowMs: TRACE_WINDOW_MS, tip, unit: state.traceUnit });
 }
 
 function renderBarsChart() {
@@ -290,13 +375,17 @@ function renderBarsChart() {
 }
 
 function renderCurvesChart() {
+  const curves = $("curves");
+  const any = Object.keys(state.sweeps).length > 0;
+  if (curves) curves.hidden = !any;
   renderCurves(els.curves, { sweeps: state.sweeps, kind: state.curveKind, tip });
 }
 
 function renderWiringDiagram() {
   const grades = Object.fromEntries(Object.values(state.panels).map((p) => [p.id, p.grade]));
+  const liveLevels = Object.fromEntries([1, 2, 3, 4].map((id) => [id, cellLive(id)]));
   state.diagramKey = `${state.pairing}|${state.pump}`;
-  renderWiring(els.wiring, { pairing: state.pairing, grades, films: state.conn === "mock" ? state.films : {}, pump: state.pump, power: state.lastPower, load: loadNoun() });
+  renderWiring(els.wiring, { pairing: state.pairing, grades, films: state.conn === "mock" ? state.films : {}, pump: state.pump, power: state.outMissing ? null : state.lastPower, measuredMa: state.measuredMa, liveLevels, load: loadNoun() });
 }
 
 function renderCal() {
@@ -482,7 +571,7 @@ function setConn(kind, text) {
 }
 
 function resetData() {
-  state.panels = {}; state.liveCurrent = {}; state.trace = []; state.sweeps = {}; state.search = null; state.proof = null; state.predicted = null; state.lastPower = 0; state.mode = "IDLE"; state.pairing = null; state.pump = null;
+  state.panels = {}; state.liveCurrent = {}; state.liveHist = { 1: [], 2: [], 3: [], 4: [] }; state.missingSlots = new Set(); state.outMissing = false; state.traceUnit = "W"; state.trace = []; state.sweeps = {}; state.search = null; state.proof = null; state.predicted = null; state.lastPower = 0; state.measuredMa = null; state.mode = "IDLE"; state.pairing = null; state.pump = null;
   renderAll();
 }
 

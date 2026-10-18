@@ -59,15 +59,15 @@
     <section class="panels" aria-labelledby="panels-title">
       <div class="section-head">
         <h2 id="panels-title">Panels, graded under the same light</h2>
-        <p id="panels-note" data-manual="Typed in from multimeter readings, not measured by the bench. Scores compare the four with each other.">Short-circuit current for all four at the same instant, then open-circuit voltage.</p>
+        <p id="panels-note" data-manual="Typed in from multimeter readings, not measured by the bench. Scores compare the four with each other.">Current from the INA219 boards that are actually connected. A sensor the Uno cannot find stays off this row.</p>
       </div>
       <div class="panel-row" id="panel-row"></div>
     </section>
 
     <section class="trace" aria-labelledby="trace-title">
       <div class="section-head">
-        <h2 id="trace-title">Output power, last two minutes</h2>
-        <p id="trace-note">Power into our pump, from the combined output. The line changes colour when the relays change the wiring.</p>
+        <h2 id="trace-title">Measured current, last two minutes</h2>
+        <p id="trace-note">Current from the connected INA219 boards. Spikes from a missing output sensor are not drawn.</p>
       </div>
       <div class="chart" id="trace-chart"></div>
     </section>
@@ -75,7 +75,7 @@
     <section class="wiring" aria-labelledby="wiring-title">
       <div class="section-head">
         <h2 id="wiring-title">Wiring and maximum power</h2>
-        <p data-manual="Three ways to make two pairs. Maximum power measured by hand for each, if it was entered.">Three ways to make two pairs. Maximum power from an I-V sweep of each.</p>
+        <p data-manual="Three ways to make two pairs. Maximum power measured by hand for each, if it was entered.">Three relay wirings. This bench has no sweep capacitor, so a wiring's power curve appears here only after a real sweep.</p>
       </div>
       <div class="wiring__grid">
         <div class="chart chart--diagram" id="wiring-diagram"></div>
@@ -83,7 +83,7 @@
       </div>
     </section>
 
-    <section class="curves" aria-labelledby="curves-title">
+    <section class="curves" id="curves" aria-labelledby="curves-title" hidden>
       <div class="section-head section-head--row">
         <div>
           <h2 id="curves-title">I-V sweeps</h2>
