@@ -121,21 +121,22 @@ export function renderBars(el, { pmax, best, predicted, tip }) {
 }
 
 // ---------- trace: live output power, coloured by wiring ----------
-export function renderTrace(el, { points, now, windowMs = 120000, tip }) {
+export function renderTrace(el, { points, now, windowMs = 120000, tip, unit = "W" }) {
   const { W, H } = size(el);
   const pad = { l: 44, r: 14, t: 14, b: 26 };
   const plotH = H - pad.t - pad.b;
   const plotW = W - pad.l - pad.r;
   const t0 = now - windowMs;
   const vis = points.filter((p) => p.t >= t0);
-  const max = niceMax(Math.max(0, ...vis.map((p) => p.p)), 1);
+  const max = niceMax(Math.max(0, ...vis.map((p) => p.p)), unit === "mA" ? 5 : 1);
+  const fmtPoint = (v) => (unit === "mA" ? `${v.toFixed(0)} mA` : fmtW(v));
   const x = (t) => pad.l + ((t - t0) / windowMs) * plotW;
   const y = (v) => pad.t + plotH - (v / max) * plotH;
 
-  let s = `<svg viewBox="0 0 ${W} ${H}" aria-label="Output power over the last two minutes">`;
+  let s = `<svg viewBox="0 0 ${W} ${H}" aria-label="${unit === "mA" ? "Measured current over the last two minutes" : "Output power over the last two minutes"}">`;
   s += `<g class="grid">${ticks(max).map((t) => `<line x1="${pad.l}" x2="${W - pad.r}" y1="${y(t)}" y2="${y(t)}"/>`).join("")}</g>`;
   s += `<g class="axis"><line x1="${pad.l}" x2="${W - pad.r}" y1="${y(0)}" y2="${y(0)}"/></g>`;
-  s += ticks(max).map((t) => `<text x="${pad.l - 6}" y="${y(t) + 4}" text-anchor="end">${fmtTick(t, max, "W", 1)}</text>`).join("");
+  s += ticks(max).map((t) => `<text x="${pad.l - 6}" y="${y(t) + 4}" text-anchor="end">${fmtTick(t, max, unit, unit === "mA" ? 0 : 1)}</text>`).join("");
   for (let k = 0; k <= 4; k++) {
     const t = t0 + (windowMs * k) / 4;
     const label = k === 4 ? "now" : `−${Math.round((windowMs * (4 - k)) / 4000)} s`;
@@ -174,7 +175,7 @@ export function renderTrace(el, { points, now, windowMs = 120000, tip }) {
       let best = vis[0];
       for (const p of vis) if (Math.abs(p.t - t) < Math.abs(best.t - t)) best = p;
       cross.setAttribute("x1", x(best.t)); cross.setAttribute("x2", x(best.t));
-      tip.show(`${fmtW(best.p)} on wiring ${best.pairing}, ${((now - best.t) / 1000).toFixed(0)} s ago`, ev);
+      tip.show(`${fmtPoint(best.p)} on wiring ${best.pairing}, ${((now - best.t) / 1000).toFixed(0)} s ago`, ev);
     });
     hit.addEventListener("mouseleave", () => { tip.hide(); cross.setAttribute("x1", -10); cross.setAttribute("x2", -10); });
   }
