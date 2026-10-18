@@ -129,11 +129,12 @@ function smoothMa(id, v) {
   const sorted = [...h].sort((a, b) => a - b);
   return sorted[Math.floor((sorted.length - 1) / 2)];
 }
-// Phone-light currents are about 1 mA; these panels are about 200 mA in full sun.
-// A power curve keeps a dark-room reading visible on the cell without clipping real sun.
+// Phone-light current on this bench is about 1 mA. Anything the Uno actually measures
+// lights the cell; 0 mA stays dark so covering a panel is visible.
 function liveLevel(ma) {
   if (!(ma >= 0.3)) return 0;
-  return Math.max(0.24, Math.min(1, (Math.min(ma, 200) / 200) ** 0.35));
+  const lit = Math.log10(1 + ma) / Math.log10(1 + 40);
+  return Math.max(0.72, Math.min(1, lit));
 }
 function cellLive(id) {
   const ma = state.liveCurrent[id];
@@ -333,7 +334,7 @@ function renderPanels() {
     const p = state.panels[id];
     const flagged = p && p.flags && p.flags.length;
     return `<article class="panel ${flagged ? "is-flagged" : ""}" data-id="${id}">
-      ${panelCellSvg({ id, name: `Panel ${id}`, film: !!state.films[id] && state.conn === "mock", dim: p && p.grade === "C", live: cellLive(id) })}
+      ${panelCellSvg({ id, name: `Panel ${id}`, film: !!state.films[id] && state.conn === "mock", dim: p && p.grade === "C", live: cellLive(id), ma: state.liveCurrent[id] })}
       <div>
         <div class="panel__head"><span class="panel__name">Panel ${id}</span><span class="panel__grade ${p ? `g-${p.grade}` : ""}">${p ? esc(p.grade) : "–"}</span></div>
         <div class="panel__id">${state.passports ? esc(state.passports[id] || "") : "no passport yet"}</div>
@@ -354,6 +355,10 @@ function renderPanelLive() {
   document.querySelectorAll("[data-live]").forEach((span) => {
     const v = state.liveCurrent[span.dataset.live];
     span.textContent = v != null ? `${v.toFixed(0)} mA` : "—";
+  });
+  document.querySelectorAll("[data-cell-ma]").forEach((el) => {
+    const v = state.liveCurrent[el.dataset.cellMa];
+    el.textContent = v != null ? `${v.toFixed(0)} mA` : "";
   });
   document.querySelectorAll("[data-cell]").forEach((el) => {
     el.style.setProperty("--live", cellLive(Number(el.dataset.cell)).toFixed(3));

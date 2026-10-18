@@ -50,7 +50,9 @@ export function cellGlyph({ x = 0, y = 0, w = 120, h = 84, name = "", film = fal
 }
 
 export function panelCellSvg(opts) {
-  return `<svg class="panel__cell" viewBox="0 0 120 84" role="img" aria-label="Panel ${esc(opts.name)}">${cellGlyph({ ...opts, name: "", x: 1, y: 1, w: 118, h: 82 })}</svg>`;
+  const id = opts.id == null ? "" : ` data-cell-ma="${Number(opts.id)}"`;
+  const shown = opts.ma == null ? "" : `${Math.round(opts.ma)} mA`;
+  return `<svg class="panel__cell" viewBox="0 0 120 84" role="img" aria-label="Panel ${esc(opts.name)}">${cellGlyph({ ...opts, name: "", x: 1, y: 1, w: 118, h: 82 })}<text class="cell-ma"${id} x="60" y="48" text-anchor="middle">${esc(shown)}</text></svg>`;
 }
 
 // ---------- tooltip ----------

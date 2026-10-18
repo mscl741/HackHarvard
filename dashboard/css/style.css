@@ -182,7 +182,8 @@ body[data-conn="mock"] #btn-mock { background: var(--cell); color: #fff; border-
 }
 .panel.is-flagged { border-color: var(--pair-a); }
 .panel__cell { width: 100%; height: auto; display: block; }
-.cell-body { fill: color-mix(in srgb, var(--sun) calc(var(--live, 0) * 78%), var(--cell)); }
+.cell-body { fill: color-mix(in srgb, var(--sun) calc(var(--live, 0) * 82%), var(--cell)); }
+.cell-ma { fill: #fff; font-size: 15px; font-weight: 700; font-family: var(--font); }
 .panel__head { display: flex; justify-content: space-between; align-items: baseline; }
 .panel__name { font-weight: 600; font-size: 0.95rem; }
 .panel__grade { font-weight: 700; font-size: 1.5rem; line-height: 1; font-stretch: 112%; }
