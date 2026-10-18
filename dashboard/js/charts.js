@@ -34,9 +34,9 @@ function ticks(max) {
 const fmtTick = (t, max, unit, decimals) => (t === 0 ? "0" : `${decimals ? t.toFixed(decimals) : Math.round(t)}${t === max ? " " + unit : ""}`);
 
 // A monocrystalline cell: pseudo-square with clipped corners, three busbars, faint fingers.
-export function cellGlyph({ x = 0, y = 0, w = 120, h = 84, name = "", film = false, dim = false, cls = "" }) {
+export function cellGlyph({ x = 0, y = 0, w = 120, h = 84, name = "", film = false, dim = false, cls = "", id = null, live = null }) {
   const c = Math.min(w, h) * 0.13;
-  const poly = `${x + c},${y} ${x + w - c},${y} ${x + w},${y + c} ${x + w},${y + h - c} ${x + w - c},${y + h} ${x + c},${y + h} ${x},${y + h - c} ${x},${y + c}`;
+  const poly = `${x + c},${y} ${x + w - c},${y} ${x + w},${y + h - c} ${x + w - c},${y + h} ${x + c},${y + h} ${x},${y + h - c} ${x},${y + c}`;
   let fingers = "";
   for (let fy = y + 6; fy < y + h - 3; fy += 6) {
     fingers += `<line x1="${x + 3}" y1="${fy}" x2="${x + w - 3}" y2="${fy}" stroke="rgba(255,255,255,0.09)" stroke-width="1"/>`;
@@ -44,7 +44,9 @@ export function cellGlyph({ x = 0, y = 0, w = 120, h = 84, name = "", film = fal
   const bus = [0.25, 0.5, 0.75].map((f) => `<line x1="${x + w * f}" y1="${y + 2}" x2="${x + w * f}" y2="${y + h - 2}" stroke="rgba(255,255,255,0.42)" stroke-width="1.5"/>`).join("");
   const filmLayer = film ? `<polygon points="${poly}" fill="var(--film)"/>` : "";
   const label = name ? `<text class="cell-name" x="${x + w / 2}" y="${y + h / 2 + 4}" text-anchor="middle">${esc(name)}</text>` : "";
-  return `<g class="${cls}" opacity="${dim ? 0.55 : 1}"><polygon points="${poly}" fill="var(--cell)"/>${fingers}${bus}${filmLayer}${label}</g>`;
+  const cellAttr = id == null ? "" : ` data-cell="${Number(id)}"`;
+  const liveStyle = live == null ? "" : ` style="--live:${Number(live).toFixed(3)}"`;
+  return `<g class="cell-face ${cls}"${cellAttr}${liveStyle} opacity="${dim ? 0.55 : 1}"><polygon class="cell-body" points="${poly}"/>${fingers}${bus}${filmLayer}${label}</g>`;
 }
 
 export function panelCellSvg(opts) {
@@ -244,7 +246,15 @@ export function renderCurves(el, { sweeps, kind = "pv", tip }) {
 }
 
 // ---------- wiring diagram: 2S2P with the active slot assignment ----------
-export function renderWiring(el, { pairing, grades = {}, films = {}, pump, power, load = "pump" }) {
+function pumpCaption({ pump, power, measuredMa, load }) {
+  if (pump === false) return `${load} off`;
+  if (pump && typeof power === "number" && power > 0.15) return `${load} ${power.toFixed(2)} W`;
+  if (pump && power == null && typeof measuredMa === "number") return `${Math.round(measuredMa)} mA`;
+  if (pump) return `${load} stalled`;
+  return load;
+}
+
+export function renderWiring(el, { pairing, grades = {}, films = {}, pump, power, load = "pump", liveLevels = {}, measuredMa = null }) {
   const slots = pairSlots(pairing);
   const W = 360; const H = 230;
   const busTop = 30; const busBot = 206;
@@ -268,7 +278,7 @@ export function renderWiring(el, { pairing, grades = {}, films = {}, pump, power
     s += `<line class="wire" x1="${cx}" x2="${cx}" y1="${yBot + ch}" y2="${busBot}"/>`;
     s += `<rect class="node" x="${cx - 6}" y="${(yBot + ch + busBot) / 2 - 3}" width="12" height="6" rx="1"/>`;
     [[st.top, yTop], [st.bot, yBot]].forEach(([panel, yy]) => {
-      s += cellGlyph({ x: cx - cw / 2, y: yy, w: cw, h: ch, name: `P${panel}`, film: !!films[panel], dim: grades[panel] === "C" });
+      s += cellGlyph({ x: cx - cw / 2, y: yy, w: cw, h: ch, name: `P${panel}`, film: !!films[panel], dim: grades[panel] === "C", id: panel, live: liveLevels[panel] ?? 0 });
     });
   });
   // output branch and pump
@@ -278,17 +288,17 @@ export function renderWiring(el, { pairing, grades = {}, films = {}, pump, power
   const spinning = pump && power > 0.15;
   const period = spinning ? Math.max(0.35, 2.2 - power / 2.5).toFixed(2) : 1;
   s += `<g class="pump-vane ${spinning ? "is-spinning" : ""}" style="--spin:${period}s">${[0, 120, 240].map((a) => `<line x1="${px}" y1="${py}" x2="${(px + 11 * Math.cos((a * Math.PI) / 180)).toFixed(1)}" y2="${(py + 11 * Math.sin((a * Math.PI) / 180)).toFixed(1)}"/>`).join("")}</g>`;
-  s += `<text class="diagram-label" x="${px}" y="${py + 34}" text-anchor="middle">${pump === false ? `${esc(load)} off` : spinning ? `${esc(load)} ${power.toFixed(2)} W` : pump ? `${esc(load)} stalled` : esc(load)}</text>`;
+  s += `<text class="diagram-label" x="${px}" y="${py + 34}" text-anchor="middle">${esc(pumpCaption({ pump, power, measuredMa, load }))}</text>`;
   s += "</svg>";
   el.innerHTML = s;
 }
 
-export function updatePump(el, { pump, power, load = "pump" }) {
+export function updatePump(el, { pump, power, load = "pump", measuredMa = null }) {
   const vane = el.querySelector(".pump-vane");
   const label = el.querySelector(".diagram-label:last-of-type");
   if (!vane) return;
-  const spinning = pump && power > 0.15;
+  const spinning = pump && typeof power === "number" && power > 0.15;
   vane.classList.toggle("is-spinning", !!spinning);
   if (spinning) vane.style.setProperty("--spin", `${Math.max(0.35, 2.2 - power / 2.5).toFixed(2)}s`);
-  if (label) label.textContent = pump === false ? `${load} off` : spinning ? `${load} ${power.toFixed(2)} W` : `${load} stalled`;
+  if (label) label.textContent = pumpCaption({ pump, power, measuredMa, load });
 }
